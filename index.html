@@ -1,107 +1,129 @@
-<!-- load D3 and TopoJSON BEFORE your code -->
-<script src="https://d3js.org/d3.v6.min.js"></script>
-<script src="https://unpkg.com/topojson-client@3"></script>
-
-<style>
-  #globeContainer {
-    width: 400px; height: 400px;
-    margin: auto;
-    position: relative;
-  }
-  .sphere { fill: #1f4e79; }
-  .land   { fill: #2a6eb8; stroke: #000; stroke-width: .3px; }
-  .marker    { fill: #fff; stroke: #000; stroke-width: .5px; }
-  .call-line { stroke: #fff; stroke-width: 1px; }
-  .call-text { fill: #fff; font: 10px Arial, sans-serif; pointer-events: none; }
-</style>
-
-<div id="globeContainer"></div>
-
-<script>
-(function(){
-  console.log("🔥 Globe script starting…");
-
-  const locations = [
-    { label:"USAF HQ (NY)", lat:40.7128, lon:-74.0060, timeZone:"America/New_York" },
-    { label:"London",       lat:51.5074, lon: -0.1278, timeZone:"Europe/London" },
-    { label:"Tokyo",        lat:35.6895, lon:139.6917, timeZone:"Asia/Tokyo" }
-    // …add your sites here…
-  ];
-
-  const w=400, h=400, spinMs=120000;
-  const proj = d3.geoOrthographic()
-                 .scale(180)
-                 .translate([w/2,h/2])
-                 .clipAngle(90);
-  const path = d3.geoPath().projection(proj);
-
-  const svg = d3.select("#globeContainer")
-                .append("svg").attr("width",w).attr("height",h);
-
-  svg.append("path")
-     .datum({type:"Sphere"})
-     .attr("class","sphere")
-     .attr("d",path);
-
-  d3.json("https://unpkg.com/world-atlas@2.0.2/world/110m.json")
-    .then(world => {
-      console.log("🌍 Land data loaded");
-      svg.append("path")
-         .datum(topojson.feature(world, world.objects.land))
-         .attr("class","land")
-         .attr("d",path);
-
-      svg.append("g").attr("id","markers");
-      svg.append("g").attr("id","callouts");
-
-      d3.timer(function(elapsed){
-        const λ = ( (elapsed % spinMs)/spinMs )*360 - 90;
-        proj.rotate([λ,0,0]);
-        svg.selectAll("path").attr("d", path);
-        drawPoints();
-      });
-    })
-    .catch(e=> console.error("❌ Could not load map:", e));
-
-  function drawPoints(){
-    const now = new Date();
-    // circles
-    const dots = svg.select("#markers").selectAll("circle")
-      .data(locations);
-    dots.join("circle")
-        .attr("class","marker")
-        .attr("r",3)
-        .attr("cx",d=>proj([d.lon,d.lat])[0])
-        .attr("cy",d=>proj([d.lon,d.lat])[1]);
-
-    // callouts
-    const calls = svg.select("#callouts").selectAll("g.callout")
-      .data(locations);
-    const enter = calls.enter().append("g").attr("class","callout");
-    enter.append("line").attr("class","call-line");
-    enter.append("text").attr("class","call-text");
-
-    calls.merge(enter).each(function(d){
-      const [x,y] = proj([d.lon,d.lat]);
-      const dx=12, dy=-8;
-      d3.select(this).select("line")
-        .attr("x1",x).attr("y1",y)
-        .attr("x2",x+dx).attr("y2",y+dy);
-      d3.select(this).select("text")
-        .attr("x",x+dx+2).attr("y",y+dy-2)
-        .text(formatTime(d.timeZone, now));
-    });
-  }
-
-  function formatTime(zone, dt){
-    try {
-      return dt.toLocaleTimeString('en-GB',{
-        hour:'2-digit', minute:'2-digit',
-        hour12:false, timeZone:zone
-      });
-    } catch {
-      return "--:--";
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Spinning Time Globe</title>
+  <style>
+    body, html { margin:0; padding:0; overflow:hidden; background:#000; }
+    #globeViz { width:100vw; height:100vh; display:block; }
+    .label { 
+      font: 12px Arial, sans-serif; 
+      color: #fff; 
+      background: rgba(0,0,0,0.6);
+      padding: 2px 4px; 
+      border-radius: 3px;
+      white-space: nowrap;
     }
-  }
-})();
-</script>
+  </style>
+</head>
+<body>
+  <canvas id="globeViz"></canvas>
+  <!-- Three.js core UMD -->
+  <script src="https://unpkg.com/three@0.150.1/build/three.min.js"></script>
+  <!-- Globe helper UMD -->
+  <script src="https://unpkg.com/three-globe@2.24.10/dist/three-globe.min.js"></script>
+  <!-- non-ESM CSS2DRenderer -->
+  <script src="https://unpkg.com/three@0.150.1/examples/js/renderers/CSS2DRenderer.js"></script>
+
+  <script>
+  (function(){
+    // 1) Basic scene, camera, renderer
+    const scene    = new THREE.Scene();
+    const camera   = new THREE.PerspectiveCamera(30, innerWidth/innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({
+      canvas: document.getElementById('globeViz'),
+      antialias: true
+    });
+    renderer.setSize(innerWidth, innerHeight);
+
+    // 2) CSS2DRenderer for labels
+    const labelRenderer = new THREE.CSS2DRenderer();
+    labelRenderer.setSize(innerWidth, innerHeight);
+    labelRenderer.domElement.style.position = 'absolute';
+    labelRenderer.domElement.style.top      = 0;
+    document.body.appendChild(labelRenderer.domElement);
+
+    // 3) Lights
+    scene.add(new THREE.AmbientLight(0x888888, 0.5));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    dirLight.position.set(1,1,1);
+    scene.add(dirLight);
+
+    // 4) The globe
+    const Globe = new ThreeGlobe({
+      globeImageUrl: 'https://unpkg.com/three-globe/example/img/earth-dark.jpg'
+    }).rotateY(0.25);
+    scene.add(Globe);
+
+    // 5) City data (edit/add more!)
+    const CITIES = [
+      { city:'London',   lat:51.5074, lon:-0.1278, tz:'Europe/London' },
+      { city:'New York', lat:40.7128, lon:-74.0060, tz:'America/New_York' },
+      { city:'Tokyo',    lat:35.6762, lon:139.6503, tz:'Asia/Tokyo' }
+    ];
+
+    // 6) Plot red dots + create labels
+    CITIES.forEach(pt => {
+      const { lat, lon, city, tz } = pt;
+      const phi   = (90 - lat) * Math.PI/180;
+      const theta = (lon + 180) * Math.PI/180;
+      const R = 100; // globe radius
+      const x = R * Math.sin(phi) * Math.cos(theta);
+      const y = R * Math.cos(phi);
+      const z = R * Math.sin(phi) * Math.sin(theta);
+
+      // dot
+      const dot = new THREE.Mesh(
+        new THREE.SphereGeometry(1.5, 8, 8),
+        new THREE.MeshBasicMaterial({ color:'red' })
+      );
+      dot.position.set(x,y,z);
+      scene.add(dot);
+
+      // label
+      const div = document.createElement('div');
+      div.className = 'label';
+      div.textContent = city;        // will update text later
+      const label = new THREE.CSS2DObject(div);
+      label.position.copy(dot.position);
+      scene.add(label);
+
+      pt._labelEl = div;
+    });
+
+    camera.position.z = 250;
+
+    // 7) Animate + update times
+    function animate(){
+      requestAnimationFrame(animate);
+      Globe.rotation.y += 0.001;      // gentle spin
+
+      // update city times
+      const now = new Date();
+      CITIES.forEach(pt=>{
+        try {
+          const t = now.toLocaleTimeString('en-GB',{
+            hour: '2-digit', minute: '2-digit', timeZone: pt.tz
+          });
+          pt._labelEl.textContent = `${pt.city} ${t}`;
+        } catch(e) {
+          pt._labelEl.textContent = `${pt.city} –`;
+        }
+      });
+
+      renderer.render(scene, camera);
+      labelRenderer.render(scene, camera);
+    }
+    animate();
+
+    // 8) Handle window resize
+    window.addEventListener('resize', ()=>{
+      camera.aspect = innerWidth/innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+      labelRenderer.setSize(innerWidth, innerHeight);
+    });
+  })();
+  </script>
+</body>
+</html>
